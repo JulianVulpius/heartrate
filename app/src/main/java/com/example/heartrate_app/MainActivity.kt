@@ -8,12 +8,17 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.health.services.client.HealthServices
 import androidx.health.services.client.MeasureCallback
@@ -35,12 +40,14 @@ class MainActivity : ComponentActivity() {
     private var isMeasuring by mutableStateOf(false)
     private var isPermissionGranted by mutableStateOf(false)
 
-    // WICHTIG: Hier muss die echte IPv4-Adresse mit Port 8001 stehen!
-    private val WEBSOCKET_URL = "ws://192.168.1.29:8001/ws/heartrate"
     private var webSocket: WebSocket? = null
     private val client = OkHttpClient()
-
     private var streamingJob: Job? = null
+
+    private var serverIp by mutableStateOf("192.168.1.29") // Default IPv4-Address
+    private var serverPort by mutableStateOf("8001")
+    private var isEnergySaving by mutableStateOf(false)
+    private var showSettings by mutableStateOf(false)
 
     private val measureCallback = object : MeasureCallback {
         override fun onAvailabilityChanged(dataType: DeltaDataType<*, *>, availability: Availability) {
@@ -51,7 +58,6 @@ class MainActivity : ComponentActivity() {
             val heartRatePoints = data.getData(DataType.HEART_RATE_BPM)
             heartRatePoints.lastOrNull()?.let { point ->
                 currentBpm = point.value
-                Log.d("HeartRate", "Sensor Update: $currentBpm")
             }
         }
     }
@@ -76,6 +82,14 @@ class MainActivity : ComponentActivity() {
                 isLoading = false
             }
 
+            LaunchedEffect(isEnergySaving) {
+                if (isEnergySaving) {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -91,6 +105,56 @@ class MainActivity : ComponentActivity() {
                             Spacer(modifier = Modifier.height(16.dp))
                             Text("Heartrate Live")
                         }
+                    } else if (showSettings) {
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text("Server IP", style = MaterialTheme.typography.caption)
+                            OutlinedTextField(
+                                value = serverIp,
+                                onValueChange = { serverIp = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Switch(
+                                    checked = isEnergySaving,
+                                    onCheckedChange = { isEnergySaving = it }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Power Saving", style = MaterialTheme.typography.body2)
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Text("Port", style = MaterialTheme.typography.caption)
+                            OutlinedTextField(
+                                value = serverPort,
+                                onValueChange = { serverPort = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Button(onClick = { showSettings = false }) {
+                                Text("Save")
+                            }
+                        }
+
                     } else {
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -98,19 +162,59 @@ class MainActivity : ComponentActivity() {
                             verticalArrangement = Arrangement.Center
                         ) {
                             if (isPermissionGranted) {
-                                Text(
-                                    text = if (currentBpm > 0) "${currentBpm.toInt()} BPM" else "-- BPM",
-                                    style = MaterialTheme.typography.h3
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
+
+                                Box(
+                                    modifier = Modifier.height(30.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (!isMeasuring) {
+                                        Text(
+                                            text = "⚙️",
+                                            fontSize = 24.sp,
+                                            modifier = Modifier.clickable { showSettings = true }
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Box(
+                                    modifier = Modifier.height(70.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isEnergySaving && isMeasuring) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                text = "Measuring...",
+                                                style = MaterialTheme.typography.body1,
+                                                color = MaterialTheme.colors.secondary
+                                            )
+                                            Text(
+                                                text = "Display dims soon",
+                                                style = MaterialTheme.typography.caption,
+                                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                                            )
+                                        }
+                                    } else {
+                                        Text(
+                                            text = if (currentBpm > 0) "${currentBpm.toInt()} BPM" else "-- BPM",
+                                            style = MaterialTheme.typography.h3,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
                                 Button(onClick = { toggleMeasurement() }) {
                                     Text(if (isMeasuring) "Stop" else "Start")
                                 }
+
                             } else {
-                                Text("Sensor-Erlaubnis fehlt.")
+                                Text("Sensor permission missing.")
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Button(onClick = { checkPermission() }) {
-                                    Text("Erlauben")
+                                    Text("Allow")
                                 }
                             }
                         }
@@ -152,7 +256,7 @@ class MainActivity : ComponentActivity() {
                 if (currentBpm > 0) {
                     sendDataToWebSocket(currentBpm)
                 }
-                delay(1000) // Exakt 1000 Millisekunden (1 Sekunde) warten
+                delay(1000)
             }
         }
     }
@@ -163,13 +267,24 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun connectWebSocket() {
-        val request = Request.Builder().url(WEBSOCKET_URL).build()
+        val wsUrl = "ws://$serverIp:$serverPort/ws/heartrate"
+
+        val request = Request.Builder().url(wsUrl).build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d("WebSocket", "Verbunden")
+                Log.d("WebSocket", "Connected to $wsUrl")
+
+                try {
+                    val initJson = JSONObject()
+                    initJson.put("action", "session_start")
+                    initJson.put("timestamp", System.currentTimeMillis())
+                    webSocket?.send(initJson.toString())
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e("WebSocket", "Fehler: ${t.message}")
+                Log.e("WebSocket", "Error: ${t.message}")
             }
         })
     }
@@ -188,7 +303,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun disconnectWebSocket() {
-        webSocket?.close(1000, "Messung gestoppt")
+        webSocket?.close(1000, "Measurement stopped")
         webSocket = null
     }
 
