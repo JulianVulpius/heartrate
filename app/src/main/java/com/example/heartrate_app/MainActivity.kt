@@ -21,7 +21,11 @@ import androidx.health.services.client.data.Availability
 import androidx.health.services.client.data.DataPointContainer
 import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.DeltaDataType
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.*
 import org.json.JSONObject
 
@@ -31,9 +35,12 @@ class MainActivity : ComponentActivity() {
     private var isMeasuring by mutableStateOf(false)
     private var isPermissionGranted by mutableStateOf(false)
 
-    private val WEBSOCKET_URL = "ws://192.168.178.X:8000/ws/heartrate/"
+    // WICHTIG: Hier muss die echte IPv4-Adresse mit Port 8001 stehen!
+    private val WEBSOCKET_URL = "ws://192.168.1.29:8001/ws/heartrate"
     private var webSocket: WebSocket? = null
     private val client = OkHttpClient()
+
+    private var streamingJob: Job? = null
 
     private val measureCallback = object : MeasureCallback {
         override fun onAvailabilityChanged(dataType: DeltaDataType<*, *>, availability: Availability) {
@@ -43,9 +50,8 @@ class MainActivity : ComponentActivity() {
         override fun onDataReceived(data: DataPointContainer) {
             val heartRatePoints = data.getData(DataType.HEART_RATE_BPM)
             heartRatePoints.lastOrNull()?.let { point ->
-                val bpm = point.value
-                currentBpm = bpm
-                sendDataToWebSocket(bpm)
+                currentBpm = point.value
+                Log.d("HeartRate", "Sensor Update: $currentBpm")
             }
         }
     }
@@ -60,7 +66,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         checkPermission()
 
         setContent {
@@ -127,6 +132,7 @@ class MainActivity : ComponentActivity() {
     private fun toggleMeasurement() {
         val measureClient = HealthServices.getClient(this).measureClient
         if (isMeasuring) {
+            stopStreamingTimer()
             measureClient.unregisterMeasureCallbackAsync(DataType.HEART_RATE_BPM, measureCallback)
             isMeasuring = false
             disconnectWebSocket()
@@ -135,7 +141,25 @@ class MainActivity : ComponentActivity() {
             measureClient.registerMeasureCallback(DataType.HEART_RATE_BPM, measureCallback)
             isMeasuring = true
             connectWebSocket()
+            startStreamingTimer()
         }
+    }
+
+    private fun startStreamingTimer() {
+        streamingJob?.cancel()
+        streamingJob = lifecycleScope.launch {
+            while (isActive) {
+                if (currentBpm > 0) {
+                    sendDataToWebSocket(currentBpm)
+                }
+                delay(1000) // Exakt 1000 Millisekunden (1 Sekunde) warten
+            }
+        }
+    }
+
+    private fun stopStreamingTimer() {
+        streamingJob?.cancel()
+        streamingJob = null
     }
 
     private fun connectWebSocket() {
@@ -171,6 +195,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        stopStreamingTimer()
         if (isMeasuring) {
             HealthServices.getClient(this).measureClient
                 .unregisterMeasureCallbackAsync(DataType.HEART_RATE_BPM, measureCallback)
